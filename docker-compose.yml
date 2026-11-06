@@ -1,0 +1,122 @@
+name: fleetpulse
+x-env: &env
+  MINIO_ROOT_USER: fleetadmin
+  MINIO_ROOT_PASSWORD: fleetpassword123
+x-spark: &spark
+  build:
+    context: .
+    dockerfile: docker/spark.Dockerfile
+  environment: *env
+  volumes:
+    - ./jobs:/project/jobs:ro
+    - ./app/domain.py:/project/jobs/domain.py:ro
+  entrypoint: [/opt/spark/bin/spark-submit]
+  depends_on:
+    minio-init: {condition: service_completed_successfully}
+    kafka-init: {condition: service_completed_successfully}
+services:
+  mqtt:
+    image: eclipse-mosquitto:2.0.20
+    volumes: [./config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro]
+    ports: [127.0.0.1:1883:1883]
+    healthcheck:
+      test: [CMD, mosquitto_pub, -h, localhost, -t, health, -m, ok]
+      interval: 10s
+      retries: 10
+  kafka:
+    image: apache/kafka:3.8.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    volumes: [kafka-data:/tmp/kraft-combined-logs]
+    healthcheck:
+      test: [CMD-SHELL, /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list]
+      interval: 10s
+      retries: 20
+  kafka-init:
+    image: apache/kafka:3.8.0
+    depends_on:
+      kafka: {condition: service_healthy}
+    entrypoint: [/bin/bash, -ec]
+    command: ['/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic positions --partitions 3 --replication-factor 1']
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address :9001
+    environment: *env
+    volumes: [lake:/data]
+    ports: [127.0.0.1:9000:9000, 127.0.0.1:9001:9001]
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    depends_on: [minio]
+    entrypoint: [/bin/sh, -ec]
+    command: ['until mc alias set local http://minio:9000 fleetadmin fleetpassword123; do sleep 2; done; mc mb --ignore-existing local/fleet']
+  simulator:
+    build: {context: ., dockerfile: docker/python.Dockerfile}
+    command: python app/simulator.py
+    restart: on-failure
+    depends_on:
+      mqtt: {condition: service_healthy}
+  bridge:
+    build: {context: ., dockerfile: docker/python.Dockerfile}
+    command: python app/bridge.py
+    restart: on-failure
+    depends_on:
+      mqtt: {condition: service_healthy}
+      kafka-init: {condition: service_completed_successfully}
+  spark-stream:
+    <<: *spark
+    restart: on-failure
+    command: ['--master', 'local[2]', '--driver-memory', '1g', '--packages', 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-aws:3.3.4', '/project/jobs/stream.py']
+  spark-batch:
+    <<: *spark
+    entrypoint: [python3, /project/jobs/runner.py]
+  postgres:
+    image: postgres:15.10
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: [airflow-db:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U airflow]
+      interval: 5s
+      retries: 20
+  airflow:
+    image: apache/airflow:2.10.4-python3.11
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__WEBSERVER__SECRET_KEY: fleet-local-demo-only
+      MINIO_ROOT_USER: fleetadmin
+      MINIO_ROOT_PASSWORD: fleetpassword123
+    ports: [127.0.0.1:8080:8080]
+    volumes: [./dags:/opt/airflow/dags:ro, airflow-home:/opt/airflow/logs]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    entrypoint: [/bin/bash, -ec]
+    command: ['airflow db migrate; airflow users create --username admin --password admin --firstname Demo --lastname ISSE --role Admin --email demo@example.test || true; airflow scheduler & exec airflow webserver']
+  dashboard:
+    build: {context: ., dockerfile: docker/python.Dockerfile}
+    command: streamlit run app/dashboard.py --server.address=0.0.0.0
+    environment: *env
+    ports: [127.0.0.1:8501:8501]
+    depends_on:
+      minio-init: {condition: service_completed_successfully}
+volumes:
+  lake:
+  kafka-data:
+  airflow-db:
+  airflow-home:
