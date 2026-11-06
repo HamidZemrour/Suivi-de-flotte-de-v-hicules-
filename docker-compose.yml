@@ -26,6 +26,7 @@ services:
   kafka:
     image: apache/kafka:3.8.0
     environment:
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms256m -Xmx512m}
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
@@ -75,9 +76,13 @@ services:
   spark-stream:
     <<: *spark
     restart: on-failure
-    command: ['--master', 'local[2]', '--driver-memory', '1g', '--packages', 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-aws:3.3.4', '/project/jobs/stream.py']
+    command: ['--master', '${SPARK_MASTER:-local[2]}', '--driver-memory', '${SPARK_DRIVER_MEMORY:-1g}', '--packages', 'org.apache.hudi:hudi-spark3.5-bundle_2.12:0.15.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.apache.hadoop:hadoop-aws:3.3.4', '/project/jobs/stream.py']
   spark-batch:
     <<: *spark
+    environment:
+      <<: *env
+      SPARK_MASTER: ${SPARK_MASTER:-local[2]}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-1g}
     entrypoint: [python3, /project/jobs/runner.py]
   postgres:
     image: postgres:15.10
@@ -93,6 +98,8 @@ services:
   airflow:
     build: {context: ., dockerfile: docker/airflow.Dockerfile}
     environment:
+      AIRFLOW__WEBSERVER__WORKERS: '${AIRFLOW_WEBSERVER_WORKERS:-2}'
+      AIRFLOW__SCHEDULER__PARSING_PROCESSES: '1'
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'

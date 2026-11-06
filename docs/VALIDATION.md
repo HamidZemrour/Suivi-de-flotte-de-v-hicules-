@@ -41,3 +41,12 @@ En cas de panne : `docker compose logs --tail=100 NOM_SERVICE`.
 Maven : vérifier Internet et les certificats ; ne pas désactiver TLS.
 Échec initial avant création Silver : attendre le premier micro-lot puis relancer le DAG.
 Mémoire insuffisante : augmenter la mémoire attribuée à Docker Desktop.
+
+## Adaptation Windows 8 Go
+
+- Paramètres optionnels : Spark local[1]/512m, Kafka 256m de heap,
+  un processus web Airflow ; défauts standards conservés dans Compose.
+- Deux scripts Windows séparent la collecte et le calcul Gold, afin d'éviter
+  deux JVM Spark simultanées. Airflow peut être lancé après arrêt du streaming.
+- `docker compose --env-file .env.windows8g config -q` : succès.
+- Exécution sur Windows 8 Go : non vérifiée ; aucune garantie de stabilité.

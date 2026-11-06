@@ -4,6 +4,13 @@ Projet pédagogique Big Data de la filière **ISSE** (nom utilisé dans le PDF f
 GPS simulés à Casablanca, transport MQTT et Kafka, lakehouse Hudi, traitements Spark,
 orchestration Airflow et tableau de bord Streamlit.
 
+## Windows avec 8 Go de RAM
+
+Lire `docs/WINDOWS_8GO.md`. Deux scripts tentent une exécution par étapes :
+`WINDOWS_8GO_ETAPE1.bat` puis, après création de Silver, `WINDOWS_8GO_ETAPE2.bat`.
+Ce mode réduit les services simultanés ; il ne garantit pas le fonctionnement
+sur 8 Go et ne remplace pas la démonstration continue complète du sujet.
+
 ## Démarrage sur votre PC
 
 Prérequis : Git, Docker Engine avec Compose v2 (Linux) ou Docker Desktop démarré
